@@ -1,0 +1,84 @@
+name: Main pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: GitHub repository
+        required: true
+        default: FreeTubeApp/FreeTube
+
+      ref:
+        description: Git ref (e.g., branch)
+        required: true
+        default: development
+
+jobs:
+  appimage:
+    name: Build AppImage
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+
+      - name: Install node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+
+      - run: yarn run ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - run: yarn run lint
+
+      - name: Get Version Number
+        id: getPackageInfo
+        uses: jaywcjlove/github-action-package@main
+
+      - name: Set Version Number Variable
+        id: versionNumber
+        uses: actions/github-script@v8
+        env:
+          #IS_DEV: ${{ contains(github.ref, 'development') }}
+          #IS_RC: ${{ contains(github.ref, 'RC') }}
+          VERSION_NUMBER_NIGHTLY: ${{ steps.getPackageInfo.outputs.version }}-nightly-${{ github.run_number }}
+          #VERSION_NUMBER_RC: ${{ steps.getPackageInfo.outputs.version }}-RC-${{ github.run_number }}
+          #VERSION_NUMBER: ${{ steps.getPackageInfo.outputs.version }}
+        with:
+          result-encoding: string
+          script: |
+            //if (${{ env.IS_DEV }}) {
+            //  return "${{ env.VERSION_NUMBER_NIGHTLY }}"
+            //} else if (${{ env.IS_RC }}) {
+            //  return "${{ env.VERSION_NUMBER_RC }}"
+            //} else {
+            //  return "${{env.VERSION_NUMBER }}"
+            //}
+            return "${{ env.VERSION_NUMBER_NIGHTLY }}-ta"
+
+      - name: Update package.json version
+        uses: jaywcjlove/github-action-package@main
+        with:
+          version: ${{ steps.versionNumber.outputs.result }}
+
+      - name: Install libarchive-tools
+        run: sudo apt update; sudo apt -y install libarchive-tools; echo "Version Number ${{ toJson(job) }} ${{ toJson(needs) }}"
+
+      - name: Build
+        run: yarn run build
+
+      - name: Upload AppImage
+        run: |
+          ls build/*
+          shopt -s nullglob
+          for file in build/*.AppImage{,.zsync*}; do
+            echo "Uploading $file"
+            curl --upload-file "$file" https://transfer.adminforge.de
+            # needed to produce a line feed
+            echo
+          done
